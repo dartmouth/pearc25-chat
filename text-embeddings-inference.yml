@@ -1,0 +1,92 @@
+---
+apiVersion: v1
+kind: Secret
+  name: tei
+type: Opaque
+data:
+  HUGGING_FACE_HUB_TOKEN: encrypted_secret_goes_here
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: text-embeddings-inference
+spec:
+  storageClassName: nfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 200G
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tei-bge-m3
+  labels:
+    app: tei-bge-m3
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+  selector:
+    app: tei-bge-m3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tei-bge-m3
+  labels:
+    app: tei-bge-m3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tei-bge-m3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: tei-bge-m3
+    spec:
+      # This will need to be changed to accomodate your GPU servers
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-H100-NVL
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: tei-bge-m3
+        image: ghcr.io/huggingface/text-embeddings-inference:cuda-latest
+        env:
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: tei
+              key: HUGGING_FACE_HUB_TOKEN
+        - name: MODEL_ID
+          value: "BAAI/bge-m3"
+        - name: MAX_CLIENT_BATCH_SIZE
+          value: "512"
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: storage
+          mountPath: /data/
+          subPath: "tei-bge-m3"
+        - name: shm
+          mountPath: "/dev/shm"
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: text-embeddings-inference
+      - name: shm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Gi

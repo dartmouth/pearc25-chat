@@ -1,0 +1,61 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: open-webui-kv
+type: Opaque
+data:
+    VALKEY_AUTH: encrypted_secret_goes_here
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui-kv
+  labels:
+    app: open-webui-kv
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+  selector:
+    app: open-webui-kv
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui-kv
+  labels:
+    app: open-webui-kv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-webui-kv
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: open-webui-kv
+        fw-zone: trusted
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - image: valkey/valkey:8
+        name: open-webui-kv
+        args: ["--requirepass", "$(VALKEY_AUTH)"]
+        readinessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        env:
+        - name: VALKEY_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: open-webui-kv
+              key: VALKEY_AUTH
+        ports:
+        - containerPort: 6379
+          name: open-webui-kv

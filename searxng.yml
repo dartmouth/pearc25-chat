@@ -1,0 +1,124 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: searxng
+spec:
+  storageClassName: nfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100G
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng-valkey
+  labels:
+    app: searxng-valkey
+spec:
+  type: ClusterIP
+  ports:
+  - port: 6379
+    name: valkey
+  selector:
+    app: searxng-valkey
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng-valkey
+  labels:
+    app: searxng-valkey
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: searxng-valkey
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: searxng-valkey
+        fw-zone: trusted
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: searxng-valkey
+        image: valkey/valkey:8-alpine
+        env:
+        - name: VALKEY_EXTRA_FLAGS
+          value: '--save 60 1 --loglevel warning'
+        ports:
+        - containerPort: 6379
+          name: valkey
+        volumeMounts:
+        - name: storage
+          mountPath: /data
+          subPath: valkey-data
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: searxng
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: searxng
+  labels:
+    app: searxng
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8080
+    name: http
+  selector:
+    app: searxng
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: searxng
+  labels:
+    app: searxng
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: searxng
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: searxng
+        fw-zone: trusted
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      containers:
+      - name: searxng
+        image: searxng/searxng:2024.10.3-042c7190e
+        env:
+        - name: SEARXNG_UWSGI_THREADS
+          value: '4'
+        - name: SEARXNG_UWSGI_WORKERS
+          value: '4'
+        - name: SEARXNG_PORT
+          value: '8080'
+        - name: SEARXNG_BASE_URL
+          value: 'http://searxng:8080/'
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: storage
+          mountPath: /etc/searxng
+          subPath: searxng-data
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: searxng

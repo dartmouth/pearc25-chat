@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama
+spec:
+  storageClassName: nfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100G
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+spec:
+  type: ClusterIP
+  ports:
+  - port: 11434
+  selector:
+    app: ollama
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  labels:
+    app: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      # This will need to be changed to accomdate your GPU servers
+      nodeSelector:
+        nvidia.com/gpu.product: NVIDIA-GH200-480GB
+        kubernetes.io/arch: arm64
+      tolerations:
+      - key: kubernetes.io/arch
+        operator: Equal
+        value: arm64
+        effect: NoSchedule
+      containers:
+      - image: ollama/ollama:0.6.7
+        name: ollama
+        env:
+        - name: OLLAMA_MAX_LOADED_MODELS
+          value: '8'
+        - name: OLLAMA_NUM_PARALLEL
+          value: '20'
+        - name: OLLAMA_KEEP_ALIVE
+          value: '-1'
+        - name: OLLAMA_EXPERIMENT
+          value: 'client2'
+        - name: OLLAMA_CONTEXT_LENGTH
+          value: '20480'
+        - name: GGML_CUDA_ENABLE_UNIFIED_MEMORY
+          value: '1'
+        - name: OLLAMA_FLASH_ATTENTION
+          value: '1'
+        ports:
+        - containerPort: 11434
+          name: http
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        volumeMounts:
+        - name: storage
+          mountPath: /root/.ollama
+          subPath: data
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: ollama

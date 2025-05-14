@@ -1,0 +1,174 @@
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: open-webui
+type: Opaque
+data:
+  DATABASE_URL: encrypted_secret_goes_here
+  OAUTH2_PROXY_CLIENT_SECRET: encrypted_secret_goes_here
+  OAUTH2_PROXY_COOKIE_SECRET: encrypted_secret_goes_here
+  WEBUI_SECRET_KEY: encrypted_secret_goes_here
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-webui
+spec:
+  storageClassName: nfs
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100G
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-webui
+  labels:
+    app: open-webui
+spec:
+  type: ClusterIP
+  ports:
+  - port: 8081
+    name: http
+  selector:
+    app: open-webui
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-webui
+  labels:
+    app: open-webui
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: open-webui
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: open-webui
+        fw-zone: dmz
+    spec:
+      imagePullSecrets:
+      - name: regcred
+      initContainers:
+      - name: open-webui-init-db
+        # We add small modifications to the base open-webui code to pull in open-webui token tracking
+        image: us-docker.pkg.dev/dartmouth/open-webui:1883-202503271453-v0.5.20-4
+        command: ["owui-token-tracking"]
+        args: ["init"]
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: open-webui
+              key: DATABASE_URL
+      containers:
+      - name: open-webui
+        image: us-docker.pkg.dev/dartmouth/open-webui:1883-202503271453-v0.5.20-4
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "curl --silent --fail http://localhost:8081/health | jq -e '.status == true' || exit 1"
+          initialDelaySeconds: 30
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 6
+        - name: RAG_EMBEDDING_ENGINE
+          value: ollama
+        - name: RAG_EMBEDDING_MODEL
+          value: mxbai-embed-large
+        - name: HOST
+          value: '0.0.0.0'
+        - name: PORT
+          value: '8081'
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: open-webui
+              key: DATABASE_URL
+        - name: WEBUI_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: open-webui
+              key: WEBUI_SECRET_KEY
+        # The next six lines will need to be updated for your environment
+        - name: WEBUI_NAME
+          value: 'DartmouthChat'
+        - name: WEBUI_URL
+          value: 'https://chat.dartmouth.edu/'
+        - name: OLLAMA_BASE_URL
+          value: 'http://ollama.ai-prod.svc.cluster.local:11434'
+        - name: DEFAULT_USER_ROLE
+          value: 'user'
+        - name: ENABLE_MODEL_FILTER
+          value: 'True'
+        - name: WEBSOCKET_MANAGER
+          value: 'redis'
+        - name: ENABLE_WEBSOCKET_SUPPORT
+          value: 'True'
+        - name: VALKEY_AUTH
+          valueFrom:
+            secretKeyRef:
+              name: open-webui-kv
+              key: VALKEY_AUTH
+        - name: WEBSOCKET_REDIS_URL
+          value: redis://:$(VALKEY_AUTH)@open-webui-kv:6379/0
+        - name: REDIS_URL
+          value: redis://:$(VALKEY_AUTH)@open-webui-kv:6379/0
+        - name: ENABLE_SIGNUP
+          value: 'False'
+        - name: ENABLE_LOGIN_FORM
+          value: 'False'
+        - name: ENABLE_OAUTH_SIGNUP
+          value: 'True'
+        - name: OAUTH_MERGE_ACCOUNTS_BY_EMAIL
+          value: 'True'
+        - name: OAUTH_CLIENT_ID
+          value: 'chat-prod'
+        - name: OAUTH_CLIENT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: open-webui
+              key: OAUTH2_PROXY_CLIENT_SECRET
+        # The next eight lines will need to be changed for your environment
+        - name: OPENID_PROVIDER_URL
+          value: 'https://login.dartmouth.edu/cas/oidc/.well-known/openid-configuration'
+        - name: OAUTH_PROVIDER_NAME
+          value: 'Dartmouth SSO Login'
+        - name: OAUTH_SCOPES
+          value: 'openid email profile'
+        - name: VECTOR_DB
+          value: "pgvector"
+        - name: ENABLE_ADMIN_CHAT_ACCESS
+          value: 'False' 
+        - name: ENABLE_AUDIT_LOGS 
+          value: 'False'
+        - name: AUDIT_LOG_LEVEL
+          value: 'NONE'
+        ports:
+        - containerPort: 8081
+          name: http
+        volumeMounts:
+        - name: storage
+          mountPath: /app/backend/data
+          subPath: data
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: open-webui
+      - name: config
+        configMap:
+          name: open-webui

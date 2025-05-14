@@ -1,0 +1,88 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tika
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tika
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9998
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: tika
+    app.kubernetes.io/instance: tika
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tika
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tika
+      app.kubernetes.io/instance: tika
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tika
+        app.kubernetes.io/instance: tika
+    spec:
+      serviceAccountName: tika
+      securityContext:
+        {}
+      volumes:
+      - name: sec-ctx-vol
+        emptyDir: {}
+      containers:
+        - name: tika
+          securityContext:
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsGroup: 35002
+            runAsNonRoot: true
+            runAsUser: 35002
+          image: "apache/tika:3.0.0.0"
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+          - name: sec-ctx-vol
+            mountPath: /tmp
+          ports:
+            - name: http
+              containerPort: 9998
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9998
+              scheme: HTTP
+            initialDelaySeconds: 15
+            timeoutSeconds: 30
+            failureThreshold: 20
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9998
+              scheme: HTTP
+            initialDelaySeconds: 15
+            timeoutSeconds: 30
+            failureThreshold: 20
+            periodSeconds: 5
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2000Mi
+            requests:
+              cpu: "1"
+              memory: 1500Mi
